@@ -6,6 +6,7 @@
 # Copyright (C) 2014 Clinton Hall <clintonhall@users.sourceforge.net>
 # Copyright (C) 2014 JVM <jvmed@users.sourceforge.net>
 # Copyright (C) 2014 get39678
+# Copyright (C) 2014 prinz2311
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -35,7 +36,7 @@
 # http://nzbget.net/forum/viewtopic.php?f=8&t=1391
 #
 #
-# PP-Script version: 1.4.
+# PP-Script version: 1.5.
 #
 # NOTE: This script requires Python to be installed on your system (tested
 # only with Python 2.x; may not work with Python 3.x).
@@ -78,8 +79,8 @@ POSTPROCESS_ERROR=94
 verbose = False
 # Unrar Parameters used to obtain unrar output
 UnrarParameters = 'l -p-' 
-# Strings to check if rar is password protected 
-PasswordStrings = '*, wrong password' 
+# Strings to check if rar is password protected (comma separated list)
+PasswordStrings = '*,wrong password,The specified password is incorrect,encrypted headers' 
 
 # Start up checks
 def start_check():
@@ -104,9 +105,17 @@ def start_check():
 		sys.exit(POSTPROCESS_SUCCESS)
 
 	# Check if password previously found
-	if (os.environ.get('NZBPR_PASSWORDDETECTOR_HASPASSWORD')=='yes' and not \
-		'NZBPP_DIRECTORY' in os.environ):
+	if os.environ.get('NZBPR_PASSWORDDETECTOR_HASPASSWORD')=='yes':
 		print('[DETAIL] Password previously found, skipping detection')
+		if ('NZBPP_DIRECTORY' in os.environ):
+			clean_up() # PProcessing, clean_up
+		sys.exit(POSTPROCESS_SUCCESS)
+
+	# Check if a previous scan script or user via web ui has defined a password
+	if ('NZBPR_*Unpack:Password' in os.environ):
+		print('[DETAIL] Password previously defined, skipping detection')
+		if ('NZBPP_DIRECTORY' in os.environ):
+			clean_up() # PProcessing, clean_up
 		sys.exit(POSTPROCESS_SUCCESS)
 		
 	# If called via "Post-process again" from history details dialog the download may not exist anymore
@@ -294,7 +303,7 @@ def sort_inner_files():
 
 # Remove current and any old temp files
 def clean_up():
-	nzb_id = int(os.environ.get('NZBPP_NZBID'))
+	nzb_id = os.environ.get('NZBPP_NZBID')
 	temp_folder = os.environ.get('NZBOP_TEMPDIR') + '/PasswordDetector'
 
 	nzbids = []
@@ -311,8 +320,8 @@ def clean_up():
 				nzbids.append(str(cur_id))
 
 	old_temp_files = list(set(files)-set(nzbids))
-	if not nzbids == []:
-		old_temp_files.append(str(nzb_id))
+	if nzb_id in files and nzb_id not in old_temp_files:
+		old_temp_files.append(nzb_id)
 
 	for temp_id in old_temp_files:
 		temp_file = temp_folder + '/' + str(temp_id)
