@@ -2,7 +2,7 @@
 #
 # Queue-script for NZBGet
 #
-# Copyright (C) 2014 Andrey Prygunkov <hugbug@users.sourceforge.net>
+# Copyright (C) 2014-2015 Andrey Prygunkov <hugbug@users.sourceforge.net>
 # Copyright (C) 2014 Clinton Hall <clintonhall@users.sourceforge.net>
 # Copyright (C) 2014 JVM <jvmed@users.sourceforge.net>
 # Copyright (C) 2014 get39678
@@ -36,7 +36,7 @@
 # http://nzbget.net/forum/viewtopic.php?f=8&t=1391
 #
 #
-# PP-Script version: 1.5.
+# PP-Script version: 1.7.
 #
 # NOTE: This script requires Python to be installed on your system (tested
 # only with Python 2.x; may not work with Python 3.x).
@@ -67,6 +67,7 @@ import re
 import urllib2
 import base64
 from xmlrpclib import ServerProxy
+import shlex
 
 # Exit codes used by NZBGet
 POSTPROCESS_SUCCESS=93
@@ -77,8 +78,7 @@ POSTPROCESS_ERROR=94
 
 # Verbose logging for debugging (True, False)
 verbose = False
-# Unrar Parameters used to obtain unrar output
-UnrarParameters = 'l -p-' 
+# Unrar Parameters used to obtain unrar output (line 215)
 # Strings to check if rar is password protected (comma separated list)
 PasswordStrings = '*,wrong password,The specified password is incorrect,encrypted headers' 
 
@@ -187,6 +187,23 @@ def save_tested(data):
 	with open(tmp_file_name, "a") as tmp_file:
 		tmp_file.write(data)
 		
+# Extract path to unrar from NZBGet's global option "UnrarCmd";
+# Since v15 "UnrarCmd" may contain extra parameters passed to unrar;
+# We have to strip these parameters because we need only the path to unrar.
+# Returns path to unrar executable.
+def unrar():
+	exe_name = 'unrar.exe' if os.name == 'nt' else 'unrar'
+	UnrarCmd = os.environ['NZBOP_UNRARCMD']
+	if os.path.isfile(UnrarCmd) and UnrarCmd.lower().endswith(exe_name):
+		return UnrarCmd
+	args = shlex.split(UnrarCmd)
+	for arg in args:
+		if arg.lower().endswith(exe_name):
+			return arg
+	# We were unable to determine the path to unrar;
+	# Let's use the exe name with a hope it's in the search path
+	return exe_name
+	
 # Checks files for passwords without unpacking
 def contains_password(dir):
 	files = get_latest_file(dir)
@@ -195,15 +212,17 @@ def contains_password(dir):
 		# avoid .tmp files as corrupt
 		if not "tmp" in file:
 			try:
-				command = [os.environ['NZBOP_UNRARCMD'], UnrarParameters,  dir + '/' + file]
+				command = [unrar(), 'l', '-p-', '-c-',  dir + '/' + file]
 				if check_verbose_logging():
 					print('command: %s' % command)
 				proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 				out, err = proc.communicate()
 				if check_passwordstrings(out,err):
 					return True
-			except:
-				print('[ERROR] Something went wrong checking %s' % file) 
+			except Exception as e:
+				print('[ERROR] Failed %s: %s' % (file, e))
+				if verbose:
+					traceback.print_exc() 
 		tested += file + '\n'
 	save_tested(tested)
 
@@ -269,9 +288,9 @@ def sort_inner_files():
 	# parse it but json-module is slow. We parse it on our own.
 
 	# Iterate through the list of files to find the last rar-file.
-	# The last is the one with the highest XX in ".partXX.rar".
-	regex = re.compile('.*\.part(\d+)\.rar', re.IGNORECASE)
-	last_rar_file = None
+	# The last is the one with the highest XX in ".partXX.rar" or ".rXX"
+	regex1 = re.compile('.*\.part(\d+)\.rar', re.IGNORECASE)
+	regex2 = re.compile('.*\.r(\d+)', re.IGNORECASE)
 	file_num = None
 	file_id = None
 	file_name = None
@@ -281,7 +300,7 @@ def sort_inner_files():
 			cur_id = int(line[7:len(line)-1])
 		if line.startswith('"Filename" : "'):
 			cur_name = line[14:len(line)-2]
-			match = regex.match(cur_name)
+			match = regex1.match(cur_name) or regex2.match(cur_name)
 			if (match):
 				cur_num = int(match.group(1))
 				if not file_num or cur_num > file_num:
@@ -331,7 +350,7 @@ def clean_up():
 		except:
 			print('[ERROR] Could not remove temp file ' + temp_file)
 
-# Script body			
+# Script body
 def main():
 	# Globally define directory for storing list of tested files
 	global tmp_file_name
